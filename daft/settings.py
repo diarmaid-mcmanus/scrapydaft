@@ -16,7 +16,7 @@ NEWSPIDER_MODULE = 'daft.spiders'
 
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
-#USER_AGENT = 'daft (+http://www.yourdomain.com)'
+USER_AGENT = 'Daft.ie Android App 2.2.1.4'
 
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = True

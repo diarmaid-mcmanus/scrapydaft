@@ -1,64 +1,50 @@
 import scrapy
 import json
-import lxml
 
 class DaftSpider(scrapy.Spider):
     name = "daft"
+    api_key_header = "4f0649d1009e4de04bc96026f1e8f1b25b01e090"
+    api_version_header = '1'
+    app_headers = { 'X-Daft-API-Key': api_key_header, 'X-Daft-API-Version': api_version_header,
+                    'No-Authentication': 'true' }
 
-    def _generate_url(self, action, property_type, sw, ne):
-        """Return a valid daft.ie URL as a string."""
-        sw[0] += (".03173528395185")
-        sw[1] += (".03197265625")
-        ne[0] += (".031189853816535")
-        ne[1] += (".59498046875")
-        base_url = 'http://www.daft.ie/ajax_endpoint.php?action='
-        extra_params = ('&extra_params={{"rent"%3A[0%2C50000000]'
-                        '%2C"beds"%3A[0%2C20]}}')
-        url = '{0}{1}&type={2}&sw=({3}%2C+{4})&ne=({5}%2C+{6}){7}'.format(
-            base_url, action, property_type, sw[0], sw[1], ne[0], ne[1],
-            extra_params)
-
-        return url
-
-    def _divvy_up_ireland(self):
-        """Return a list of coordinates covering Ireland."""
-        with open('coordinates.json') as data_file:
-            data = json.load(data_file)
-        return data
+    def _generate_api_url(self, page_number, listing_type):
+        """Return a valid daft.ie API url as a string."""
+        base_url = 'https://api.daft.ie'
+        url_path = '/vD8/json/search_{0}'.format(listing_type)
+        parameters = '?parameters={{"query":{{"ad_type":"{0}","page":{1},"perpage":25,"sort_ascending":false,"sort_by":"priority_date"}},"api_key":"{2}"}}&source=android'.format(listing_type, page_number, self.api_key_header)
+        return '{0}{1}{2}'.format(base_url, url_path, parameters)
 
     def generate_scraper_urls_for_sale(self):
         """Return a collection of all properties for sale in Ireland."""
-        urls = []
-        for coords in self._divvy_up_ireland():
-            url = self._generate_url('map_nearby_properties', 'sale', coords['sw'], coords['ne'])
-            urls.append(url)
-        return urls
+        return scrapy.Request(url=self._generate_api_url(1, "sale"), callback=self.pagination, headers=self.app_headers)
+
+    def _generate_media_api_url(self, ad_id):
+        base_url = 'https://api.daft.ie'
+        url_path = '/vD8/json/media'
+        parameters = '?parameters={{"ad_id":{0},"ad_type":"{1}","api_key":"{2}"}}&source=android'.format(ad_id, "sale", self.api_key_header)
+        return '{0}{1}{2}'.format(base_url, url_path, parameters)
+
+    def pagination(self, response):
+        api_results = json.loads(response.text)
+        #from scrapy.shell import inspect_response
+        #inspect_response(response, self)
+        for property in api_results['result']['results']['ads']:
+            ad_id = property['ad_id']
+            yield scrapy.Request(url=self._generate_media_api_url(ad_id), callback=self.get_media_for_ad, headers=self.app_headers)
+            yield property
+        if api_results['result']['results']['pagination']['num_pages'] > api_results['result']['results']['pagination']['current_page']:
+            yield scrapy.Request(url=self._generate_api_url(api_results['result']['results']['pagination']['current_page']+1, "sale"), callback=self.pagination, headers=self.app_headers)
+
+    def get_media_for_ad(self, response):
+        api_results = json.loads(response.text)
+        all_media = []
+        #from scrapy.shell import inspect_response
+        #inspect_response(response, self)
+        for media in api_results['result']['media']['images']:
+            all_media.append([media['large_url'], media['caption']])
+        yield json.loads('{{"ad_id": {0}, "media": {1}}}'.format(api_results['result']['media']['ad_id'], json.dumps(all_media)))
+
 
     def start_requests(self):
-        urls = self.generate_scraper_urls_for_sale()
-        for url in urls:
-            yield scrapy.Request(url=url, callback=self.parse, meta={'handle_http_status_list': [301]})
-
-
-    def parse(self, response):
-        result_data = json.loads(response.text)
-        for property in result_data:
-            url = "http://www.daft.ie" + property['link']
-            yield scrapy.Request(url=url, callback=self.parse_property_images, meta={'handle_http_status_list': [301]})
-            yield property
-
-    def parse_property_images(self, response):
-        """stolen from https://github.com/Danm72/DaftPy"""
-        # TODO I can drop the lxml requirement now, and use scrapy
-        tree = lxml.html.fromstring(response.text)
-        results = tree.cssselect('#pbxl_carousel ul li.pbxl_carousel_item img')
-        images = []
-        for image in results:
-            url = image.get('src')
-            if url.startswith('//'):
-                url = 'https:' + url
-            images.append(url)
-        yield { 'id': response.css('li#saved-ad::attr(data-adid)').extract()[0],
-                'results': images,
-              }
-
+        yield self.generate_scraper_urls_for_sale()
