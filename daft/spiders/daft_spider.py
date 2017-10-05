@@ -55,4 +55,4 @@ class DaftSpider(scrapy.Spider):
 
     def start_requests(self):
         self.logger.debug("I am doing the thing")
-        return scrapy.Request(url=self._generate_search_url(1, "sale"), callback=self.parse_search, headers=self.app_headers)
+        yield scrapy.Request(url=self._generate_search_url(1, "sale"), callback=self.parse_search, headers=self.app_headers)
