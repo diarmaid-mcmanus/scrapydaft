@@ -37,7 +37,7 @@ class DaftSpider(scrapy.Spider):
             yield property
         if num_pages > current_page:
             self.logger.debug("DAFTDEBUG yielding page {0} of {1}".format(current_page+1, num_pages))
-            yield scrapy.Request(url=self._generate_search_url(current_page+1, "sale"), callback=self.parse_search_page, headers=self.app_headers)
+            yield scrapy.Request(url=self._generate_search_url(current_page+1, "sale"), callback=self.parse_search, headers=self.app_headers)
 
     def calculate_additional_debug(self, num):
         if num % 5 == 0:
