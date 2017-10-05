@@ -7,44 +7,52 @@ class DaftSpider(scrapy.Spider):
     api_version_header = '1'
     app_headers = { 'X-Daft-API-Key': api_key_header, 'X-Daft-API-Version': api_version_header,
                     'No-Authentication': 'true' }
+    api_url = 'https://api.daft.ie'
+    api_path = '/vD8/json/'
 
-    def _generate_api_url(self, page_number, listing_type):
+    def _generate_api_url(self, endpoint, parameters):
+        return '{0}{1}{2}?parameters={3}&source=android'.format(self.api_url, self.api_path, endpoint, parameters)
+
+    def _generate_search_url(self, page_number, listing_type):
         """Return a valid daft.ie API url as a string."""
-        base_url = 'https://api.daft.ie'
-        url_path = '/vD8/json/search_{0}'.format(listing_type)
-        parameters = '?parameters={{"query":{{"ad_type":"{0}","page":{1},"perpage":25,"sort_ascending":false,"sort_by":"priority_date"}},"api_key":"{2}"}}&source=android'.format(listing_type, page_number, self.api_key_header)
-        return '{0}{1}{2}'.format(base_url, url_path, parameters)
+        endpoint = 'search_{0}'.format(listing_type)
+        parameters = '{{"query":{{"ad_type":"{0}","page":{1},"perpage":25,"sort_ascending":false,"sort_by":"priority_date"}},"api_key":"{2}"}}'.format(listing_type, page_number, self.api_key_header)
+        return self._generate_api_url(endpoint, parameters)
 
-    def generate_scraper_urls_for_sale(self):
-        """Return a collection of all properties for sale in Ireland."""
-        return scrapy.Request(url=self._generate_api_url(1, "sale"), callback=self.pagination, headers=self.app_headers)
+    def _generate_media_url(self, ad_id):
+        parameters = '{{"ad_id":{0},"ad_type":"{1}","api_key":"{2}"}}'.format(ad_id, "sale", self.api_key_header)
+        return self._generate_api_url('media', parameters)
 
-    def _generate_media_api_url(self, ad_id):
-        base_url = 'https://api.daft.ie'
-        url_path = '/vD8/json/media'
-        parameters = '?parameters={{"ad_id":{0},"ad_type":"{1}","api_key":"{2}"}}&source=android'.format(ad_id, "sale", self.api_key_header)
-        return '{0}{1}{2}'.format(base_url, url_path, parameters)
-
-    def pagination(self, response):
+    def parse_search(self, response):
         api_results = json.loads(response.text)
-        #from scrapy.shell import inspect_response
-        #inspect_response(response, self)
+        current_page = api_results['result']['results']['pagination']['current_page']
+        num_pages = api_results['result']['results']['pagination']['num_pages']
+        current_property = 0
         for property in api_results['result']['results']['ads']:
             ad_id = property['ad_id']
-            yield scrapy.Request(url=self._generate_media_api_url(ad_id), callback=self.get_media_for_ad, headers=self.app_headers)
+            current_property = current_property+1
+            self.logger.debug("DAFTDEBUG yielding Media request {0} {1}".format(ad_id, self.calculate_additional_debug(current_property)))
+            yield scrapy.Request(url=self._generate_media_url(ad_id), callback=self.parse_media, headers=self.app_headers)
+            self.logger.debug("DAFTDEBUG yielding property {0} {1}".format(ad_id, self.calculate_additional_debug(current_property)))
             yield property
-        if api_results['result']['results']['pagination']['num_pages'] > api_results['result']['results']['pagination']['current_page']:
-            yield scrapy.Request(url=self._generate_api_url(api_results['result']['results']['pagination']['current_page']+1, "sale"), callback=self.pagination, headers=self.app_headers)
+        if num_pages > current_page:
+            self.logger.debug("DAFTDEBUG yielding page {0} of {1}".format(current_page+1, num_pages))
+            yield scrapy.Request(url=self._generate_search_url(current_page+1, "sale"), callback=self.parse_search_page, headers=self.app_headers)
 
-    def get_media_for_ad(self, response):
+    def calculate_additional_debug(self, num):
+        if num % 5 == 0:
+            return "{0}".format(num)
+        else:
+            return ""
+
+    def parse_media(self, response):
         api_results = json.loads(response.text)
         all_media = []
-        #from scrapy.shell import inspect_response
-        #inspect_response(response, self)
         for media in api_results['result']['media']['images']:
             all_media.append([media['large_url'], media['caption']])
         yield json.loads('{{"ad_id": {0}, "media": {1}}}'.format(api_results['result']['media']['ad_id'], json.dumps(all_media)))
 
 
     def start_requests(self):
-        yield self.generate_scraper_urls_for_sale()
+        self.logger.debug("I am doing the thing")
+        return scrapy.Request(url=self._generate_search_url(1, "sale"), callback=self.parse_search, headers=self.app_headers)
